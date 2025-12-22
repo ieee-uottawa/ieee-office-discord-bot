@@ -1,0 +1,8 @@
+services:
+  ieee-office-discord-bot:
+    build: .
+    container_name: ieee-office-discord-bot
+    restart: unless-stopped
+    # Load environment variables like DISCORD_TOKEN, SERVER_URL, etc.
+    env_file:
+      - .env
