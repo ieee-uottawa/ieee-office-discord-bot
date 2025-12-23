@@ -53,6 +53,7 @@ COMMUNITY_GUILD_ID=your_community_guild_id_here
 
 # Optional
 OFFICE_TRACKER_CHANNEL_NAME=office-tracker
+DISCORD_BOT_API_KEY=your_api_key_here # if backend is secured
 ```
 
 **How to get Discord IDs:**
@@ -170,6 +171,7 @@ This links their Discord account to their RFID tag for seamless check-in/out.
 | `EXEC_GUILD_ID`                | Yes      | -                       | Discord server ID with admin controls     |
 | `COMMUNITY_GUILD_ID`           | Yes      | -                       | Discord server ID with read-only access   |
 | `OFFICE_TRACKER_CHANNEL_NAME`  | No       | `office-tracker`        | Channel name for dashboard                |
+| `DISCORD_BOT_API_KEY`          | No       | -                       | API key if backend is secured             |
 
 ## How It Works
 
@@ -238,7 +240,3 @@ The bot needs these Discord permissions:
 ## CI/CD
 
 GitHub Actions workflow automatically builds and pushes Docker images to Docker Hub when a release is published.
-
-## License
-
-MIT License - see LICENSE file for details

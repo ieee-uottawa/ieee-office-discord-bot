@@ -20,6 +20,7 @@ TOKEN = os.getenv("DISCORD_TOKEN")
 
 # Configuration
 SERVER_URL = os.getenv("SERVER_URL", "http://localhost:8080")
+API_KEY = os.getenv("DISCORD_BOT_API_KEY", "")  # API key for authentication (optional)
 
 OFFICE_TRACKER_CHANNEL_NAME = os.getenv("OFFICE_TRACKER_CHANNEL_NAME", "office-tracker")
 
@@ -30,6 +31,11 @@ GUILD_MAPPING = {
     EXEC_GUILD_ID: "CONTROL",  # The server with Exit/Refresh
     COMMUNITY_GUILD_ID: "VIEW_ONLY",  # The server with only Refresh
 }
+
+# Build request headers with API key if configured
+REQUEST_HEADERS = {"Content-Type": "application/json"}
+if API_KEY:
+    REQUEST_HEADERS["X-API-Key"] = API_KEY
 
 ENDPOINTS = {
     "current": f"{SERVER_URL}/current",
@@ -70,7 +76,7 @@ def get_current_office_attendees():
     """
     global server_status
     try:
-        response = requests.get(ENDPOINTS["current"], timeout=5)
+        response = requests.get(ENDPOINTS["current"], headers=REQUEST_HEADERS, timeout=5)
         response.raise_for_status()
         data = response.json()
 
@@ -152,7 +158,7 @@ class ControlView(BaseOfficeView):
         user_id = interaction.user.id
         try:
             response = requests.post(
-                ENDPOINTS["signout_discord"], json={"discord_id": str(user_id)}, timeout=5
+                ENDPOINTS["signout_discord"], json={"discord_id": str(user_id)}, headers=REQUEST_HEADERS, timeout=5
             )
             response.raise_for_status()
         except requests.RequestException as e:
@@ -308,6 +314,7 @@ async def add_member(
                 "uid": uid,
                 "discord_id": str(member.id),
             },
+            headers=REQUEST_HEADERS,
             timeout=5,
         )
         response.raise_for_status()
@@ -330,7 +337,7 @@ async def list_members(interaction: discord.Interaction):
     Lists all members currently registered in the backend system.
     """
     try:
-        response = requests.get(ENDPOINTS["members"], timeout=5)
+        response = requests.get(ENDPOINTS["members"], headers=REQUEST_HEADERS, timeout=5)
         response.raise_for_status()
         data = response.json()
     except requests.RequestException as e:
@@ -369,7 +376,7 @@ async def scan_history(interaction: discord.Interaction):
     Lists the last 10 scan events from the backend system.
     """
     try:
-        response = requests.get(ENDPOINTS["scan_history"], timeout=5)
+        response = requests.get(ENDPOINTS["scan_history"], headers=REQUEST_HEADERS, timeout=5)
         response.raise_for_status()
         data = response.json()
     except requests.RequestException as e:
@@ -428,7 +435,7 @@ async def history(interaction: discord.Interaction, limit: int = 10):
     limit = max(1, min(limit, 25))
     
     try:
-        response = requests.get(ENDPOINTS["history"], timeout=5)
+        response = requests.get(ENDPOINTS["history"], headers=REQUEST_HEADERS, timeout=5)
         response.raise_for_status()
         data = response.json()
     except requests.RequestException as e:
@@ -501,7 +508,7 @@ async def signout_all(interaction: discord.Interaction):
     Signs out all members currently signed in to the office.
     """
     try:
-        response = requests.post(ENDPOINTS["signout_all"], timeout=5)
+        response = requests.post(ENDPOINTS["signout_all"], headers=REQUEST_HEADERS, timeout=5)
         response.raise_for_status()
     except requests.RequestException as e:
         logger.error(f"Error signing out all members: {e}")
@@ -526,7 +533,7 @@ async def signin(interaction: discord.Interaction, member: discord.Member):
     """
     try:
         response = requests.post(
-            ENDPOINTS["signin_discord"], json={"discord_id": str(member.id)}, timeout=5
+            ENDPOINTS["signin_discord"], json={"discord_id": str(member.id)}, headers=REQUEST_HEADERS, timeout=5
         )
         response.raise_for_status()
     except requests.RequestException as e:
@@ -551,7 +558,7 @@ async def signout(interaction: discord.Interaction, member: discord.Member):
     """
     try:
         response = requests.post(
-            ENDPOINTS["signout_discord"], json={"discord_id": str(member.id)}, timeout=5
+            ENDPOINTS["signout_discord"], json={"discord_id": str(member.id)}, headers=REQUEST_HEADERS, timeout=5
         )
         response.raise_for_status()
     except requests.RequestException as e:
