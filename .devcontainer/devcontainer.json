@@ -1,0 +1,36 @@
+{
+	"name": "IEEE Office Discord Bot Python 3.12 Dev Env",
+	"image": "mcr.microsoft.com/devcontainers/python:0-3.12",
+	"features": {
+		"ghcr.io/devcontainers/features/git:1": {}
+	},
+	"remoteUser": "vscode",
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"ms-python.python",
+				"ms-python.vscode-pylance",
+				"ms-python.black-formatter"
+			],
+			"settings": {
+				"python.linting.enabled": true,
+				"python.formatting.provider": "black",
+				"[python]": {
+					"editor.defaultFormatter": "ms-python.black-formatter"
+				}
+			}
+		}
+	},
+	"mounts": [
+		"source=${localEnv:HOME}/.ssh,target=/home/vscode/.ssh,type=bind,readonly"
+	],
+	"remoteEnv": {
+		"DISCORD_TOKEN": "${localEnv:DISCORD_TOKEN}",
+		"SERVER_URL": "${localEnv:SERVER_URL}",
+		"EXEC_GUILD_ID": "${localEnv:EXEC_GUILD_ID}",
+		"COMMUNITY_GUILD_ID": "${localEnv:COMMUNITY_GUILD_ID}",
+		"OFFICE_TRACKER_CHANNEL_NAME": "${localEnv:OFFICE_TRACKER_CHANNEL_NAME}",
+		"DISCORD_BOT_API_KEY": "${localEnv:DISCORD_BOT_API_KEY}"
+	},
+	"postCreateCommand": "pip install -r requirements.txt && echo 'Ready to code!'"
+}
