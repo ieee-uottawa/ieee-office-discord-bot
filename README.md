@@ -13,6 +13,9 @@ Discord bot for tracking IEEE office attendance. Integrates with the [ieee-offic
   - Community server with read-only dashboard viewing
 - **Auto-refresh**: Dashboard updates every minute automatically
 - **Admin Commands**: Member management, manual check-in/out, history viewing
+- **Leaderboard & Reports**: Weekly report with top members by hours and visits
+- **Smart Filtering**: Automatically filters out 4 AM auto-signouts from stats
+- **Pagination**: Large lists (members, visits) use interactive pagination
 - **Backend Integration**: Communicates with `ieee-office-backend` REST API
 - **Error Handling**: Displays connection status and server errors
 
@@ -135,8 +138,8 @@ This links their Discord account to their RFID tag for seamless check-in/out.
 
 #### Member Management
 
-- `/add_member @user uid:"..." [name:"..."]` - Register a new member with RFID UID
-- `/list_members` - View all registered members
+- `/add_member @user uid:"..." [name:"..."]` - Register a new member with RFID UID (requires admin)
+- `/members` - View all registered members
 - `/scan_history` - View last 10 RFID scans
 
 #### Manual Control
@@ -147,8 +150,13 @@ This links their Discord account to their RFID tag for seamless check-in/out.
 
 #### History & Analytics
 
-- `/visits [from_date:YYYY-MM-DD] [to_date:YYYY-MM-DD] [limit:25]` - View visits with optional date filters (max 100)
+- `/visits [from_date:YYYY-MM-DD] [to_date:YYYY-MM-DD] [limit:100]` - View visits with optional date filters (max 500)
+- `/leaderboard [metric:hours|visits] [period:week|month|semester|all] [top:10]` - View attendance leaderboard (auto-filters 4 AM signouts)
 - `/delete_visits [from_date:YYYY-MM-DD] [to_date:YYYY-MM-DD]` - Delete visits within date range (requires admin)
+
+#### Reports Control
+
+- `/weekly_reports enabled:true|false` - Enable or disable the automated weekly report (admin only)
 
 ## Interactive Buttons
 
@@ -172,6 +180,8 @@ This links their Discord account to their RFID tag for seamless check-in/out.
 | `EXEC_GUILD_ID`                | Yes      | -                       | Discord server ID with admin controls     |
 | `COMMUNITY_GUILD_ID`           | Yes      | -                       | Discord server ID with read-only access   |
 | `OFFICE_TRACKER_CHANNEL_NAME`  | No       | `office-tracker`        | Channel name for dashboard                |
+| `WEEKLY_REPORT_CHANNEL_ID`     | No       | -                       | Channel ID for automated weekly reports   |
+| `WEEKLY_REPORT_ENABLED`        | No       | `true`                  | Toggle to enable/disable weekly reports   |
 | `DISCORD_BOT_API_KEY`          | No       | -                       | API key if backend is secured             |
 
 ## How It Works

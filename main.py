@@ -23,6 +23,8 @@ SERVER_URL = os.getenv("SERVER_URL", "http://localhost:8080")
 API_KEY = os.getenv("DISCORD_BOT_API_KEY", "")  # API key for authentication (optional)
 
 OFFICE_TRACKER_CHANNEL_NAME = os.getenv("OFFICE_TRACKER_CHANNEL_NAME", "office-tracker")
+WEEKLY_REPORT_CHANNEL_ID = os.getenv("WEEKLY_REPORT_CHANNEL_ID")  # Channel for automated weekly reports
+WEEKLY_REPORT_ENABLED = os.getenv("WEEKLY_REPORT_ENABLED").strip().lower() in ("1", "true", "yes", "on")
 
 COMMUNITY_GUILD_ID = int(os.getenv("COMMUNITY_GUILD_ID"))
 EXEC_GUILD_ID = int(os.getenv("EXEC_GUILD_ID"))
@@ -102,6 +104,130 @@ def get_current_office_attendees():
         logger.error(f"Error parsing attendee data: {e}")
         server_status = {"ok": False, "error": f"Data parsing error: {e}"}
         return {}, False
+
+
+def calculate_leaderboard(days: int = 7, top_n: int = 10):
+    """
+    Fetches visit data and calculates leaderboard statistics.
+    Filters out auto-signouts at 4 AM (nightly cleanup).
+    
+    Args:
+        days: Number of days to look back
+        top_n: Number of top members to return
+    
+    Returns:
+        tuple: (leaderboard_data, error_message)
+               leaderboard_data is list of dicts with: name, visits, total_hours, avg_hours
+    """
+    try:
+        # Calculate date range
+        from_date = (datetime.now() - __import__('datetime').timedelta(days=days)).strftime("%Y-%m-%dT00:00:00Z")
+        to_date = datetime.now().strftime("%Y-%m-%dT23:59:59Z")
+        
+        # Fetch visits
+        params = {"from": from_date, "to": to_date, "limit": 1000}
+        response = requests.get(
+            ENDPOINTS["visits"], params=params, headers=REQUEST_HEADERS, timeout=10
+        )
+        response.raise_for_status()
+        visits = response.json()
+        
+        if not visits:
+            return [], None
+        
+        # Aggregate by member, filtering out 4 AM auto-signouts
+        member_stats = {}
+        for visit in visits:
+            name = visit.get("name", "Unknown")
+            signin = visit.get("signin_time", "")
+            signout = visit.get("signout_time", "")
+            
+            try:
+                signin_dt = datetime.fromisoformat(signin)
+                signout_dt = datetime.fromisoformat(signout)
+                
+                # Filter out auto-signouts at 4 AM (nightly cleanup)
+                if signout_dt.hour == 4 and signout_dt.minute == 0:
+                    continue
+                
+                duration_hours = (signout_dt - signin_dt).total_seconds() / 3600
+                
+                # Skip unreasonably long visits (>24 hours, likely errors)
+                if duration_hours > 24:
+                    continue
+                
+                if name not in member_stats:
+                    member_stats[name] = {"visits": 0, "total_hours": 0}
+                
+                member_stats[name]["visits"] += 1
+                member_stats[name]["total_hours"] += duration_hours
+            except Exception as e:
+                logger.warning(f"Error processing visit: {e}")
+                continue
+        
+        # Calculate averages and format
+        leaderboard = []
+        for name, stats in member_stats.items():
+            leaderboard.append({
+                "name": name,
+                "visits": stats["visits"],
+                "total_hours": stats["total_hours"],
+                "avg_hours": stats["total_hours"] / stats["visits"] if stats["visits"] > 0 else 0
+            })
+        
+        # Sort by visits (primary) and total hours (secondary)
+        leaderboard.sort(key=lambda x: (x["visits"], x["total_hours"]), reverse=True)
+        
+        return leaderboard[:top_n], None
+        
+    except requests.RequestException as e:
+        logger.error(f"Error fetching leaderboard data: {e}")
+        return [], f"Failed to fetch data: {e}"
+    except Exception as e:
+        logger.error(f"Error calculating leaderboard: {e}")
+        return [], f"Error processing data: {e}"
+
+
+def build_leaderboard_embed(leaderboard_data: list, title: str, days: int = None, footer_text: str = None) -> discord.Embed:
+    """
+    Builds a leaderboard embed from leaderboard data.
+    
+    Args:
+        leaderboard_data: List of dicts with name, visits, total_hours
+        title: Embed title
+        days: Number of days (for footer)
+        footer_text: Optional custom footer text
+    
+    Returns:
+        discord.Embed with formatted leaderboard
+    """
+    description_lines = []
+    
+    medals = ["🥇", "🥈", "🥉"]
+    for idx, member in enumerate(leaderboard_data):
+        rank = idx + 1
+        medal = medals[idx] if idx < 3 else f"{rank}."
+        
+        hours_str = f"{member['total_hours']:.1f}h"
+        visits_str = f"{member['visits']} visit{'s' if member['visits'] != 1 else ''}"
+        
+        description_lines.append(
+            f"{medal} **{member['name']}** — {visits_str} ({hours_str})"
+        )
+    
+    embed = discord.Embed(
+        title=title,
+        description="\n".join(description_lines),
+        color=0xFFD700,  # Gold
+    )
+    
+    # Set footer
+    if footer_text:
+        embed.set_footer(text=footer_text)
+    elif days:
+        embed.set_footer(text=f"Last {days} days • Excluding auto-signouts at 4 AM")
+    
+    return embed
 
 
 # -----------------------------
@@ -399,7 +525,8 @@ async def setup(interaction: discord.Interaction):
     await global_refresh()
 
 
-@bot.tree.command(name="add_member", description="Add a member to the backend")
+@bot.tree.command(name="add_member", description="[Admin] Add a member to the backend")
+@app_commands.checks.has_permissions(administrator=True)
 @app_commands.guilds(discord.Object(id=EXEC_GUILD_ID))
 async def add_member(
     interaction: discord.Interaction, member: discord.Member, uid: str, name: str = None
@@ -733,6 +860,7 @@ async def delete_visits(
     name="signout_all", description="[Admin] Sign out all members from the office"
 )
 @app_commands.checks.has_permissions(administrator=True)
+@app_commands.guilds(discord.Object(id=EXEC_GUILD_ID))
 async def signout_all(interaction: discord.Interaction):
     """
     Signs out all members currently signed in to the office.
@@ -759,6 +887,7 @@ async def signout_all(interaction: discord.Interaction):
 
 @bot.tree.command(name="signin", description="[Admin] Sign in a member to the office")
 @app_commands.checks.has_permissions(administrator=True)
+@app_commands.guilds(discord.Object(id=EXEC_GUILD_ID))
 async def signin(interaction: discord.Interaction, member: discord.Member):
     """
     Signs in a member to the office using their Discord ID.
@@ -787,6 +916,7 @@ async def signin(interaction: discord.Interaction, member: discord.Member):
 
 
 @bot.tree.command(name="signout", description="Sign out a member from the office")
+@app_commands.guilds(discord.Object(id=EXEC_GUILD_ID))
 async def signout(interaction: discord.Interaction, member: discord.Member):
     """
     Signs out a member from the office using their Discord ID.
@@ -814,9 +944,147 @@ async def signout(interaction: discord.Interaction, member: discord.Member):
     await global_refresh()
 
 
+@bot.tree.command(name="leaderboard", description="View office attendance leaderboard")
+@app_commands.guilds(discord.Object(id=EXEC_GUILD_ID))
+async def leaderboard(
+    interaction: discord.Interaction,
+    period: str = "week",
+    top: int = 10
+):
+    """
+    Shows attendance leaderboard for a time period.
+    1. period: Time period - 'week' (7 days), 'month' (30 days), 'semester' (120 days), 'all' (all time)
+    2. top: Number of top members to show (default 10, max 25)
+    """
+    # Map period to days
+    period_map = {
+        "week": 7,
+        "month": 30,
+        "semester": 120,
+        "all": 3650  # ~10 years, effectively all time
+    }
+    
+    period_lower = period.lower()
+    if period_lower not in period_map:
+        await interaction.response.send_message(
+            f"❌ Invalid period. Choose from: week, month, semester, all",
+            ephemeral=True
+        )
+        return
+    
+    days = period_map[period_lower]
+    top = max(1, min(top, 25))  # Clamp between 1 and 25
+    
+    # Defer response as this might take a moment
+    await interaction.response.defer(ephemeral=True)
+    
+    leaderboard_data, error = calculate_leaderboard(days=days, top_n=top)
+    
+    if error:
+        await interaction.followup.send(f"❌ {error}", ephemeral=True)
+        return
+    
+    if not leaderboard_data:
+        await interaction.followup.send(
+            f"No visit data found for the last {days} days.",
+            ephemeral=True
+        )
+        return
+    
+    # Build leaderboard embed using shared function
+    period_name = period_lower.capitalize() if period_lower != "all" else "All Time"
+    embed = build_leaderboard_embed(
+        leaderboard_data=leaderboard_data,
+        title=f"🏆 Office Leaderboard — {period_name}",
+        days=days
+    )
+    
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="weekly_reports", description="[Admin] Enable or disable the weekly report task")
+@app_commands.guilds(discord.Object(id=EXEC_GUILD_ID))
+@app_commands.checks.has_permissions(administrator=True)
+async def weekly_reports_toggle(interaction: discord.Interaction, enabled: bool):
+    """
+    Enable or disable the automated weekly report.
+    - enabled: true to start, false to stop
+    """
+    global WEEKLY_REPORT_ENABLED
+
+    # If enabling but no channel configured
+    if enabled and not WEEKLY_REPORT_CHANNEL_ID:
+        await interaction.response.send_message(
+            "❌ WEEKLY_REPORT_CHANNEL_ID is not configured. Set it in the environment.",
+            ephemeral=True,
+        )
+        return
+
+    # Update the in-memory flag
+    WEEKLY_REPORT_ENABLED = enabled
+
+    # Start/stop task accordingly
+    if enabled:
+        if not weekly_report_task.is_running():
+            weekly_report_task.start()
+        await interaction.response.send_message(
+            "✅ Weekly reports have been enabled.", ephemeral=True
+        )
+    else:
+        if weekly_report_task.is_running():
+            weekly_report_task.stop()
+        await interaction.response.send_message(
+            "🛑 Weekly reports have been disabled.", ephemeral=True
+        )
+
+
 # -----------------------------
 # Background Tasks
 # -----------------------------
+@tasks.loop(hours=168)  # Run every week (168 hours)
+async def weekly_report_task():
+    """
+    Posts weekly attendance report to configured channel.
+    Runs every Sunday at the time the bot was started.
+    """
+    if not WEEKLY_REPORT_CHANNEL_ID:
+        return  # Report channel not configured
+    
+    try:
+        channel = bot.get_channel(int(WEEKLY_REPORT_CHANNEL_ID))
+        if not channel:
+            logger.error(f"Weekly report channel {WEEKLY_REPORT_CHANNEL_ID} not found")
+            return
+        
+        # Get top 5 for the week
+        leaderboard_data, error = calculate_leaderboard(days=7, top_n=5)
+        
+        if error:
+            logger.error(f"Failed to generate weekly report: {error}")
+            return
+        
+        if not leaderboard_data:
+            # No data for the week, skip report
+            return
+        
+        # Build report embed using shared function
+        embed = build_leaderboard_embed(
+            leaderboard_data=leaderboard_data,
+            title="📊 Weekly Office Report",
+            footer_text="Keep up the great work! 🎉 • Excluding auto-signouts at 4 AM"
+        )
+        
+        # Add introductory text and adjust color
+        embed.description = "Here are the top office attendees from last week:\n\n" + embed.description
+        embed.color = 0x3498DB  # Blue for weekly report
+        
+        await channel.send(embed=embed)
+        logger.info(f"Weekly report posted to channel {WEEKLY_REPORT_CHANNEL_ID}")
+        
+    except Exception as e:
+        logger.error(f"Error posting weekly report: {e}")
+
+
 @tasks.loop(minutes=1)
 async def auto_refresh_task():
     """
@@ -866,6 +1134,14 @@ async def on_ready():
     if not auto_refresh_task.is_running():
         auto_refresh_task.start()
         logger.info("Auto-refresh task started (every 1 minutes).")
+    
+    # Start the weekly report background task if enabled
+    if WEEKLY_REPORT_ENABLED:
+        if WEEKLY_REPORT_CHANNEL_ID and not weekly_report_task.is_running():
+            weekly_report_task.start()
+            logger.info(f"Weekly report task started (every 7 days).")
+    else:
+        logger.info("Weekly report task disabled by WEEKLY_REPORT_ENABLED=false.")
 
 
 if __name__ == "__main__":
