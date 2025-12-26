@@ -147,7 +147,8 @@ This links their Discord account to their RFID tag for seamless check-in/out.
 
 #### History & Analytics
 
-- `/history [limit:10]` - View recent office visits with timestamps and durations
+- `/visits [from_date:YYYY-MM-DD] [to_date:YYYY-MM-DD] [limit:25]` - View visits with optional date filters (max 100)
+- `/delete_visits [from_date:YYYY-MM-DD] [to_date:YYYY-MM-DD]` - Delete visits within date range (requires admin)
 
 ## Interactive Buttons
 

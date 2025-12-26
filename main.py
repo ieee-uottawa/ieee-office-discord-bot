@@ -42,7 +42,7 @@ ENDPOINTS = {
     "members": f"{SERVER_URL}/members",
     "count": f"{SERVER_URL}/count",
     "scan_history": f"{SERVER_URL}/scan-history",
-    "history": f"{SERVER_URL}/history",
+    "visits": f"{SERVER_URL}/visits",
     "signout_all": f"{SERVER_URL}/sign-out-all",
     "signin_discord": f"{SERVER_URL}/sign-in-discord",
     "signout_discord": f"{SERVER_URL}/sign-out-discord",
@@ -76,7 +76,9 @@ def get_current_office_attendees():
     """
     global server_status
     try:
-        response = requests.get(ENDPOINTS["current"], headers=REQUEST_HEADERS, timeout=5)
+        response = requests.get(
+            ENDPOINTS["current"], headers=REQUEST_HEADERS, timeout=5
+        )
         response.raise_for_status()
         data = response.json()
 
@@ -158,7 +160,10 @@ class ControlView(BaseOfficeView):
         user_id = interaction.user.id
         try:
             response = requests.post(
-                ENDPOINTS["signout_discord"], json={"discord_id": str(user_id)}, headers=REQUEST_HEADERS, timeout=5
+                ENDPOINTS["signout_discord"],
+                json={"discord_id": str(user_id)},
+                headers=REQUEST_HEADERS,
+                timeout=5,
             )
             response.raise_for_status()
         except requests.RequestException as e:
@@ -337,7 +342,9 @@ async def list_members(interaction: discord.Interaction):
     Lists all members currently registered in the backend system.
     """
     try:
-        response = requests.get(ENDPOINTS["members"], headers=REQUEST_HEADERS, timeout=5)
+        response = requests.get(
+            ENDPOINTS["members"], headers=REQUEST_HEADERS, timeout=5
+        )
         response.raise_for_status()
         data = response.json()
     except requests.RequestException as e:
@@ -376,7 +383,9 @@ async def scan_history(interaction: discord.Interaction):
     Lists the last 10 scan events from the backend system.
     """
     try:
-        response = requests.get(ENDPOINTS["scan_history"], headers=REQUEST_HEADERS, timeout=5)
+        response = requests.get(
+            ENDPOINTS["scan_history"], headers=REQUEST_HEADERS, timeout=5
+        )
         response.raise_for_status()
         data = response.json()
     except requests.RequestException as e:
@@ -424,79 +433,184 @@ async def scan_history(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
-@bot.tree.command(name="history", description="View recent office visit history")
+@bot.tree.command(name="visits", description="View office visits with optional filters")
 @app_commands.guilds(discord.Object(id=EXEC_GUILD_ID))
-async def history(interaction: discord.Interaction, limit: int = 10):
+async def visits(
+    interaction: discord.Interaction,
+    from_date: str = None,
+    to_date: str = None,
+    limit: int = 25,
+):
     """
-    Shows recent completed office visits (sign-in + sign-out sessions).
-    limit: Number of recent sessions to display (default 10, max 25)
+    Retrieves office visits with optional date range filters.
+    1. from_date: Start date in YYYY-MM-DD format (optional).
+    2. to_date: End date in YYYY-MM-DD format (optional).
+    3. limit: Maximum number of visits to return (default 25, max 100 due to Discord embed limits).
     """
-    # Clamp limit to reasonable range
-    limit = max(1, min(limit, 25))
-    
+    # Clamp limit to Discord embed limits
+    limit = max(1, min(limit, 100))
+
+    # Build query parameters
+    params = {"limit": limit}
+    if from_date:
+        # Convert YYYY-MM-DD to RFC3339 format
+        try:
+            from_dt = datetime.strptime(from_date, "%Y-%m-%d")
+            params["from"] = from_dt.strftime("%Y-%m-%dT00:00:00Z")
+        except ValueError:
+            await interaction.response.send_message(
+                "❌ Invalid from_date format. Use YYYY-MM-DD (e.g., 2024-01-15).",
+                ephemeral=True,
+            )
+            return
+
+    if to_date:
+        # Convert YYYY-MM-DD to RFC3339 format
+        try:
+            to_dt = datetime.strptime(to_date, "%Y-%m-%d")
+            params["to"] = to_dt.strftime("%Y-%m-%dT23:59:59Z")
+        except ValueError:
+            await interaction.response.send_message(
+                "❌ Invalid to_date format. Use YYYY-MM-DD (e.g., 2024-01-31).",
+                ephemeral=True,
+            )
+            return
+
     try:
-        response = requests.get(ENDPOINTS["history"], headers=REQUEST_HEADERS, timeout=5)
+        response = requests.get(
+            ENDPOINTS["visits"], params=params, headers=REQUEST_HEADERS, timeout=10
+        )
         response.raise_for_status()
         data = response.json()
     except requests.RequestException as e:
-        logger.error(f"Error fetching history: {e}")
+        logger.error(f"Error fetching visits: {e}")
         await interaction.response.send_message(
-            f"❌ Failed to fetch history: {e}", ephemeral=True
+            f"❌ Failed to fetch visits: {e}", ephemeral=True
         )
         return
 
     if not data:
         await interaction.response.send_message(
-            "No visit history available yet.", ephemeral=True
+            "No visits found matching the criteria.", ephemeral=True
         )
         return
 
-    # Take only the requested number of records
-    sessions = data[:limit]
-    
-    history_lines = []
-    for session in sessions:
-        name = session.get("name", "Unknown")
-        signin = session.get("signin_time", "")
-        signout = session.get("signout_time", "")
-        
-        # Parse timestamps
+    # Build visit list with Discord embed field limits in mind
+    visit_lines = []
+    for visit in data:
+        name = visit.get("name", "Unknown")
+        signin = visit.get("signin_time", "")
+        signout = visit.get("signout_time", "")
+
         try:
             signin_dt = datetime.fromisoformat(signin)
             signout_dt = datetime.fromisoformat(signout)
-            
+
             # Calculate duration
             duration = signout_dt - signin_dt
             hours = duration.total_seconds() / 3600
-            
+
             # Format display
             date_str = signin_dt.strftime("%Y-%m-%d")
             signin_time = signin_dt.strftime("%H:%M")
             signout_time = signout_dt.strftime("%H:%M")
-            
+
             if hours >= 1:
                 duration_str = f"{hours:.1f}h"
             else:
                 minutes = duration.total_seconds() / 60
                 duration_str = f"{minutes:.0f}m"
-            
-            history_lines.append(
+
+            visit_lines.append(
                 f"• **{name}** — {date_str} {signin_time}-{signout_time} ({duration_str})"
             )
-        except Exception as e:
-            # Fallback if timestamp parsing fails
-            history_lines.append(f"• **{name}** — {signin} to {signout}")
-    
-    history_text = "\n".join(history_lines)
-    
+        except Exception:
+            # Fallback if parsing fails
+            visit_lines.append(f"• **{name}** — {signin} to {signout}")
+
+    # Discord embeds have a 4096 character limit for description
+    visit_text = "\n".join(visit_lines)
+    if len(visit_text) > 4000:
+        visit_text = visit_text[:3997] + "..."
+
     embed = discord.Embed(
-        title="🕒 Office Visit History",
-        description=history_text,
-        color=0x3498DB,
+        title="📊 Office Visits",
+        description=visit_text,
+        color=0x2ECC71,
     )
-    embed.set_footer(text=f"Showing last {len(sessions)} visit(s)")
-    
+
+    # Add filter info to footer
+    footer_parts = [f"Showing {len(data)} visit(s)"]
+    if from_date:
+        footer_parts.append(f"from {from_date}")
+    if to_date:
+        footer_parts.append(f"to {to_date}")
+    embed.set_footer(text=" ".join(footer_parts))
+
     await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(
+    name="delete_visits", description="[Admin] Delete visits within a date range"
+)
+@app_commands.guilds(discord.Object(id=EXEC_GUILD_ID))
+@app_commands.checks.has_permissions(administrator=True)
+async def delete_visits(
+    interaction: discord.Interaction, from_date: str = None, to_date: str = None
+):
+    """
+    Deletes office visits within the specified date range.
+    At least one of from_date or to_date must be provided.
+    1. from_date: Start date in YYYY-MM-DD format (optional).
+    2. to_date: End date in YYYY-MM-DD format (optional).
+    """
+    if not from_date and not to_date:
+        await interaction.response.send_message(
+            "❌ At least one of from_date or to_date must be provided.", ephemeral=True
+        )
+        return
+
+    # Build query parameters
+    params = {}
+    if from_date:
+        try:
+            from_dt = datetime.strptime(from_date, "%Y-%m-%d")
+            params["from"] = from_dt.strftime("%Y-%m-%dT00:00:00Z")
+        except ValueError:
+            await interaction.response.send_message(
+                "❌ Invalid from_date format. Use YYYY-MM-DD (e.g., 2024-01-15).",
+                ephemeral=True,
+            )
+            return
+
+    if to_date:
+        try:
+            to_dt = datetime.strptime(to_date, "%Y-%m-%d")
+            params["to"] = to_dt.strftime("%Y-%m-%dT23:59:59Z")
+        except ValueError:
+            await interaction.response.send_message(
+                "❌ Invalid to_date format. Use YYYY-MM-DD (e.g., 2024-01-31).",
+                ephemeral=True,
+            )
+            return
+
+    try:
+        response = requests.delete(
+            ENDPOINTS["visits"], params=params, headers=REQUEST_HEADERS, timeout=10
+        )
+        response.raise_for_status()
+        result = response.json()
+        deleted_count = result.get("deleted", 0)
+    except requests.RequestException as e:
+        logger.error(f"Error deleting visits: {e}")
+        await interaction.response.send_message(
+            f"❌ Failed to delete visits: {e}", ephemeral=True
+        )
+        return
+
+    await interaction.response.send_message(
+        f"✅ Successfully deleted {deleted_count} visit(s).", ephemeral=True
+    )
 
 
 @bot.tree.command(
@@ -508,7 +622,9 @@ async def signout_all(interaction: discord.Interaction):
     Signs out all members currently signed in to the office.
     """
     try:
-        response = requests.post(ENDPOINTS["signout_all"], headers=REQUEST_HEADERS, timeout=5)
+        response = requests.post(
+            ENDPOINTS["signout_all"], headers=REQUEST_HEADERS, timeout=5
+        )
         response.raise_for_status()
     except requests.RequestException as e:
         logger.error(f"Error signing out all members: {e}")
@@ -533,7 +649,10 @@ async def signin(interaction: discord.Interaction, member: discord.Member):
     """
     try:
         response = requests.post(
-            ENDPOINTS["signin_discord"], json={"discord_id": str(member.id)}, headers=REQUEST_HEADERS, timeout=5
+            ENDPOINTS["signin_discord"],
+            json={"discord_id": str(member.id)},
+            headers=REQUEST_HEADERS,
+            timeout=5,
         )
         response.raise_for_status()
     except requests.RequestException as e:
@@ -558,7 +677,10 @@ async def signout(interaction: discord.Interaction, member: discord.Member):
     """
     try:
         response = requests.post(
-            ENDPOINTS["signout_discord"], json={"discord_id": str(member.id)}, headers=REQUEST_HEADERS, timeout=5
+            ENDPOINTS["signout_discord"],
+            json={"discord_id": str(member.id)},
+            headers=REQUEST_HEADERS,
+            timeout=5,
         )
         response.raise_for_status()
     except requests.RequestException as e:
