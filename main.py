@@ -184,6 +184,106 @@ class ControlView(BaseOfficeView):
         await self.do_refresh(interaction)
 
 
+class PaginatedView(ui.View):
+    """
+    A reusable paginated view with Previous/Next buttons.
+    """
+    def __init__(self, pages: list[discord.Embed], timeout: int = 180):
+        super().__init__(timeout=timeout)
+        self.pages = pages
+        self.current_page = 0
+        self.max_page = len(pages) - 1
+        
+        # Update button states for initial page
+        self.update_buttons()
+    
+    def update_buttons(self):
+        """Update button states based on current page."""
+        self.previous_button.disabled = (self.current_page == 0)
+        self.next_button.disabled = (self.current_page == self.max_page)
+    
+    def get_current_embed(self) -> discord.Embed:
+        """Get the embed for the current page with page indicator."""
+        embed = self.pages[self.current_page]
+        # Preserve existing footer if present, append page info
+        current_footer = embed.footer.text if embed.footer else ""
+        if current_footer:
+            page_info = f" • Page {self.current_page + 1}/{self.max_page + 1}"
+        else:
+            page_info = f"Page {self.current_page + 1}/{self.max_page + 1}"
+        embed.set_footer(text=current_footer + page_info)
+        return embed
+    
+    @ui.button(label="◀ Previous", style=discord.ButtonStyle.gray, custom_id="paginated_prev")
+    async def previous_button(self, interaction: discord.Interaction, button: ui.Button):
+        self.current_page = max(0, self.current_page - 1)
+        self.update_buttons()
+        try:
+            await interaction.response.edit_message(embed=self.get_current_embed(), view=self)
+        except discord.errors.NotFound:
+            # Message was deleted, stop the view
+            self.stop()
+    
+    @ui.button(label="Next ▶", style=discord.ButtonStyle.gray, custom_id="paginated_next")
+    async def next_button(self, interaction: discord.Interaction, button: ui.Button):
+        self.current_page = min(self.max_page, self.current_page + 1)
+        self.update_buttons()
+        try:
+            await interaction.response.edit_message(embed=self.get_current_embed(), view=self)
+        except discord.errors.NotFound:
+            # Message was deleted, stop the view
+            self.stop()
+    
+    @ui.button(label="🗑️ Close", style=discord.ButtonStyle.red, custom_id="paginated_close")
+    async def close_button(self, interaction: discord.Interaction, button: ui.Button):
+        try:
+            await interaction.response.defer()
+            await interaction.delete_original_response()
+        except discord.errors.NotFound:
+            pass  # Message already deleted
+        self.stop()
+    
+    async def on_timeout(self):
+        """Disable buttons when view times out."""
+        for item in self.children:
+            item.disabled = True
+
+
+def create_pages(items: list, items_per_page: int, title: str, 
+                 formatter: callable, color: int = 0x3498DB) -> list[discord.Embed]:
+    """
+    Split items into pages and create embeds.
+    
+    Args:
+        items: List of items to paginate
+        items_per_page: Number of items per page
+        title: Embed title
+        formatter: Function to format each item as a string
+        color: Embed color
+    
+    Returns:
+        List of Discord embeds (one per page)
+    """
+    pages = []
+    total_pages = (len(items) + items_per_page - 1) // items_per_page  # Ceiling division
+    
+    for page_num in range(total_pages):
+        start_idx = page_num * items_per_page
+        end_idx = min(start_idx + items_per_page, len(items))
+        page_items = items[start_idx:end_idx]
+        
+        description = "\n".join([formatter(item) for item in page_items])
+        
+        embed = discord.Embed(
+            title=title,
+            description=description,
+            color=color,
+        )
+        pages.append(embed)
+    
+    return pages
+
+
 # -----------------------------
 # Global Update Logic
 # -----------------------------
@@ -335,9 +435,9 @@ async def add_member(
     )
 
 
-@bot.tree.command(name="list_members", description="List all members in the backend")
+@bot.tree.command(name="members", description="List all members in the backend")
 @app_commands.guilds(discord.Object(id=EXEC_GUILD_ID))
-async def list_members(interaction: discord.Interaction):
+async def members(interaction: discord.Interaction):
     """
     Lists all members currently registered in the backend system.
     """
@@ -360,20 +460,32 @@ async def list_members(interaction: discord.Interaction):
         )
         return
 
-    member_list = "\n".join(
-        [
-            f"• **{entry['name']}** (UID: `{entry['uid']}`, Discord ID: `{entry['discord_id']}`)"
-            for entry in data
-        ]
-    )
-
-    embed = discord.Embed(
+    # Create paginated embeds (15 members per page)
+    def format_member(entry):
+        return f"• **{entry['name']}** (ID: `{entry['id']}`, UID: `{entry['uid']}`, Discord: `{entry['discord_id']}`)"
+    
+    pages = create_pages(
+        items=data,
+        items_per_page=15,
         title="📋 Registered Members",
-        description=member_list,
-        color=0x3498DB,
+        formatter=format_member,
+        color=0x3498DB
     )
-
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    
+    # Add total count to first page
+    pages[0].description = f"*Total: {len(data)} member(s)*\n\n" + pages[0].description
+    
+    # If only one page, send without pagination
+    if len(pages) == 1:
+        pages[0].set_footer(text=f"Total: {len(data)} member(s)")
+        await interaction.response.send_message(embed=pages[0], ephemeral=True)
+    else:
+        view = PaginatedView(pages)
+        await interaction.response.send_message(
+            embed=view.get_current_embed(), 
+            view=view, 
+            ephemeral=True
+        )
 
 
 @bot.tree.command(name="scan_history", description="List last 10 scan events")
@@ -439,16 +551,17 @@ async def visits(
     interaction: discord.Interaction,
     from_date: str = None,
     to_date: str = None,
-    limit: int = 25,
+    limit: int = 100,
 ):
     """
     Retrieves office visits with optional date range filters.
+    Results are paginated for readability.
     1. from_date: Start date in YYYY-MM-DD format (optional).
     2. to_date: End date in YYYY-MM-DD format (optional).
-    3. limit: Maximum number of visits to return (default 25, max 100 due to Discord embed limits).
+    3. limit: Maximum number of visits to return (default 100, max 500).
     """
-    # Clamp limit to Discord embed limits
-    limit = max(1, min(limit, 100))
+    # Clamp limit to reasonable maximum
+    limit = max(1, min(limit, 500))
 
     # Build query parameters
     params = {"limit": limit}
@@ -495,9 +608,8 @@ async def visits(
         )
         return
 
-    # Build visit list with Discord embed field limits in mind
-    visit_lines = []
-    for visit in data:
+    # Format visit data
+    def format_visit(visit):
         name = visit.get("name", "Unknown")
         signin = visit.get("signin_time", "")
         signout = visit.get("signout_time", "")
@@ -505,12 +617,9 @@ async def visits(
         try:
             signin_dt = datetime.fromisoformat(signin)
             signout_dt = datetime.fromisoformat(signout)
-
-            # Calculate duration
             duration = signout_dt - signin_dt
             hours = duration.total_seconds() / 3600
 
-            # Format display
             date_str = signin_dt.strftime("%Y-%m-%d")
             signin_time = signin_dt.strftime("%H:%M")
             signout_time = signout_dt.strftime("%H:%M")
@@ -521,33 +630,40 @@ async def visits(
                 minutes = duration.total_seconds() / 60
                 duration_str = f"{minutes:.0f}m"
 
-            visit_lines.append(
-                f"• **{name}** — {date_str} {signin_time}-{signout_time} ({duration_str})"
-            )
+            return f"• **{name}** — {date_str} {signin_time}-{signout_time} ({duration_str})"
         except Exception:
-            # Fallback if parsing fails
-            visit_lines.append(f"• **{name}** — {signin} to {signout}")
-
-    # Discord embeds have a 4096 character limit for description
-    visit_text = "\n".join(visit_lines)
-    if len(visit_text) > 4000:
-        visit_text = visit_text[:3997] + "..."
-
-    embed = discord.Embed(
+            return f"• **{name}** — {signin} to {signout}"
+    
+    # Create paginated embeds (20 visits per page)
+    pages = create_pages(
+        items=data,
+        items_per_page=20,
         title="📊 Office Visits",
-        description=visit_text,
-        color=0x2ECC71,
+        formatter=format_visit,
+        color=0x2ECC71
     )
-
-    # Add filter info to footer
-    footer_parts = [f"Showing {len(data)} visit(s)"]
+    
+    # Add filter info to first page
+    filter_parts = [f"Total: {len(data)} visit(s)"]
     if from_date:
-        footer_parts.append(f"from {from_date}")
+        filter_parts.append(f"from {from_date}")
     if to_date:
-        footer_parts.append(f"to {to_date}")
-    embed.set_footer(text=" ".join(footer_parts))
-
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+        filter_parts.append(f"to {to_date}")
+    filter_text = " • ".join(filter_parts)
+    
+    pages[0].description = f"*{filter_text}*\n\n" + pages[0].description
+    
+    # Send with or without pagination
+    if len(pages) == 1:
+        pages[0].set_footer(text=filter_text)
+        await interaction.response.send_message(embed=pages[0], ephemeral=True)
+    else:
+        view = PaginatedView(pages, timeout=300)  # 5 min timeout for longer lists
+        await interaction.response.send_message(
+            embed=view.get_current_embed(),
+            view=view,
+            ephemeral=True
+        )
 
 
 @bot.tree.command(
