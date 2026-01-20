@@ -24,7 +24,7 @@ API_KEY = os.getenv("DISCORD_BOT_API_KEY", "")  # API key for authentication (op
 
 OFFICE_TRACKER_CHANNEL_NAME = os.getenv("OFFICE_TRACKER_CHANNEL_NAME", "office-tracker")
 WEEKLY_REPORT_CHANNEL_ID = os.getenv("WEEKLY_REPORT_CHANNEL_ID")  # Channel for automated weekly reports
-WEEKLY_REPORT_ENABLED = os.getenv("WEEKLY_REPORT_ENABLED").strip().lower() in ("1", "true", "yes", "on")
+WEEKLY_REPORT_ENABLED = os.getenv("WEEKLY_REPORT_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on")
 
 COMMUNITY_GUILD_ID = int(os.getenv("COMMUNITY_GUILD_ID"))
 EXEC_GUILD_ID = int(os.getenv("EXEC_GUILD_ID"))
@@ -51,7 +51,7 @@ ENDPOINTS = {
 }
 
 LAST_REFRESH_TIME = None
-REFRESH_COOLDOWN = 15  # seconds
+REFRESH_COOLDOWN = 10  # seconds
 
 # Setup Intents
 intents = discord.Intents.default()
