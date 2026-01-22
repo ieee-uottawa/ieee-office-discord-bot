@@ -87,8 +87,16 @@ DISCORD_BOT_API_KEY=your_api_key_here # if backend is secured
 
 3. Install dependencies:
 
+   **For production (running the bot):**
+
    ```bash
    pip install -r requirements.txt
+   ```
+
+   **For development (with testing):**
+
+   ```bash
+   pip install -r requirements-dev.txt
    ```
 
 4. Run the bot:
@@ -239,16 +247,60 @@ The bot needs these Discord permissions:
 
 ## Development
 
+### Running Tests
+
+The bot includes focused unit tests for business logic: **leaderboard calculation** with visit aggregation, 4 AM filtering, and sorting.
+
+**Install test dependencies:**
+
+```bash
+pip install -r requirements-dev.txt  # Includes pytest, pytest-asyncio, pytest-mock
+```
+
+Or for testing only (minimal):
+
+```bash
+pip install pytest pytest-asyncio pytest-mock
+```
+
+**Run tests:**
+
+```bash
+pytest tests/ -v
+```
+
+**Test coverage:**
+
+- Visit aggregation and duration calculation
+- 4 AM auto-signout filtering logic
+- Leaderboard sorting by visits and hours
+- Top N limiting
+- Empty/error response handling
+
+**Running specific test:**
+
+```bash
+pytest tests/test_helpers.py::TestCalculateLeaderboard::test_calculate_leaderboard_filters_4am -v
+```
+
 ### Project Structure
 
 ```txt
 .
 ├── main.py              # Main bot code
-├── requirements.txt     # Python dependencies
-├── Dockerfile          # Container build configuration
-├── docker-compose.yml  # Docker Compose setup
-├── .env.example        # Environment variable template
-└── README.md           # This file
+├── requirements.txt     # Production dependencies (used by Docker)
+├── requirements-dev.txt # Development dependencies (includes testing)
+├── pytest.ini           # Pytest configuration
+├── Dockerfile           # Container build configuration
+├── docker-compose.yml   # Docker Compose setup
+├── .env.example         # Environment variable template
+├── .github/workflows/   # GitHub Actions CI/CD
+│   └── tests.yml        # Automated test runner
+├── tests/               # Test suite
+│   ├── __init__.py
+│   ├── conftest.py      # Shared fixtures
+│   └── test_helpers.py  # Helper function tests
+└── README.md            # This file
 ```
 
 ### Key Components

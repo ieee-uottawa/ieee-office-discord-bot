@@ -1,0 +1,7 @@
+# Production dependencies (used by Docker)
+-r requirements.txt
+
+# Testing & Development
+pytest==8.3.6
+pytest-asyncio==0.24.0
+pytest-mock==3.14.0
