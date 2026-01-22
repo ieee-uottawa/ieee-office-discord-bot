@@ -26,13 +26,16 @@ OFFICE_TRACKER_CHANNEL_NAME = os.getenv("OFFICE_TRACKER_CHANNEL_NAME", "office-t
 WEEKLY_REPORT_CHANNEL_ID = os.getenv("WEEKLY_REPORT_CHANNEL_ID")  # Channel for automated weekly reports
 WEEKLY_REPORT_ENABLED = os.getenv("WEEKLY_REPORT_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on")
 
-COMMUNITY_GUILD_ID = int(os.getenv("COMMUNITY_GUILD_ID"))
-EXEC_GUILD_ID = int(os.getenv("EXEC_GUILD_ID"))
+# Optional guild IDs - only configured guilds will get dashboards
+COMMUNITY_GUILD_ID = os.getenv("COMMUNITY_GUILD_ID")
+EXEC_GUILD_ID = os.getenv("EXEC_GUILD_ID")
 
-GUILD_MAPPING = {
-    EXEC_GUILD_ID: "CONTROL",  # The server with Exit/Refresh
-    COMMUNITY_GUILD_ID: "VIEW_ONLY",  # The server with only Refresh
-}
+# Build guild mapping from configured guilds only
+GUILD_MAPPING = {}
+if EXEC_GUILD_ID:
+    GUILD_MAPPING[int(EXEC_GUILD_ID)] = "CONTROL"  # The server with Exit/Refresh
+if COMMUNITY_GUILD_ID:
+    GUILD_MAPPING[int(COMMUNITY_GUILD_ID)] = "VIEW_ONLY"  # The server with only Refresh
 
 # Build request headers with API key if configured
 REQUEST_HEADERS = {"Content-Type": "application/json"}
@@ -442,24 +445,24 @@ async def global_refresh():
     else:
         # Server OK
         if len(office_attendees) == 0:
-            value = "No one is currently in the office."
+            description = "No one is currently in the office."
             color = 0x95A5A6  # Grey
         else:
             # Sort by arrival time (already sorted from backend)
-            value = "\n".join(
+            member_list = "\n".join(
                 [
                     f"• **{name}** (since {time.strftime('%H:%M')})"
                     for name, time in office_attendees.items()
                 ]
             )
+            description = f"**Currently in office:**\n{member_list}"
             color = 0x2ECC71  # Green
 
         embed = discord.Embed(
             title="🏢 IEEE Office Presence",
-            description="Current occupancy status:",
+            description=description,
             color=color,
         )
-        embed.add_field(name="Currently in office:", value=value, inline=False)
         embed.set_footer(text=f"Last update: {datetime.now().strftime('%H:%M:%S')}")
 
     # 2. Iterate through our configured guilds
@@ -525,8 +528,7 @@ async def setup(interaction: discord.Interaction):
     await global_refresh()
 
 
-@bot.tree.command(name="add_member", description="[Admin] Add a member to the backend")
-@app_commands.checks.has_permissions(administrator=True)
+@bot.tree.command(name="add_member", description="Add a member to the backend")
 @app_commands.guilds(discord.Object(id=EXEC_GUILD_ID))
 async def add_member(
     interaction: discord.Interaction, member: discord.Member, uid: str, name: str = None
@@ -559,6 +561,88 @@ async def add_member(
 
     await interaction.response.send_message(
         f"✅ Successfully added {member.mention} with UID `{uid}`.", ephemeral=True
+    )
+
+
+@bot.tree.command(name="update_member", description="[Admin] Update a member's information")
+@app_commands.checks.has_permissions(administrator=True)
+@app_commands.guilds(discord.Object(id=EXEC_GUILD_ID))
+async def update_member(
+    interaction: discord.Interaction,
+    member_id: int,
+    name: str = None,
+    uid: str = None,
+    discord_id: str = None,
+):
+    """
+    Updates a member's information in the backend system.
+    1. member_id: The backend member ID to update.
+    2. name: Optional new name for the member.
+    3. uid: Optional new UID for the member.
+    4. discord_id: Optional new Discord ID for the member.
+    """
+    if not any([name, uid, discord_id]):
+        await interaction.response.send_message(
+            "❌ At least one field (name, uid, or discord_id) must be provided.",
+            ephemeral=True,
+        )
+        return
+
+    # Build update payload with only provided fields
+    update_data = {}
+    if name:
+        update_data["name"] = name
+    if uid:
+        update_data["uid"] = uid
+    if discord_id:
+        update_data["discord_id"] = discord_id
+
+    try:
+        response = requests.put(
+            f"{ENDPOINTS['members']}/{member_id}",
+            json=update_data,
+            headers=REQUEST_HEADERS,
+            timeout=5,
+        )
+        response.raise_for_status()
+    except requests.RequestException as e:
+        logger.error(f"Error updating member {member_id}: {e}")
+        await interaction.response.send_message(
+            f"❌ Failed to update member: {e}", ephemeral=True
+        )
+        return
+
+    fields_updated = ", ".join(update_data.keys())
+    await interaction.response.send_message(
+        f"✅ Successfully updated member ID `{member_id}` ({fields_updated}).",
+        ephemeral=True,
+    )
+
+
+@bot.tree.command(name="delete_member", description="[Admin] Delete a member from the backend")
+@app_commands.checks.has_permissions(administrator=True)
+@app_commands.guilds(discord.Object(id=EXEC_GUILD_ID))
+async def delete_member(interaction: discord.Interaction, member_id: int):
+    """
+    Deletes a member from the backend system by their member ID.
+    1. member_id: The backend member ID to delete.
+    """
+    try:
+        response = requests.delete(
+            f"{ENDPOINTS['members']}/{member_id}",
+            headers=REQUEST_HEADERS,
+            timeout=5,
+        )
+        response.raise_for_status()
+    except requests.RequestException as e:
+        logger.error(f"Error deleting member {member_id}: {e}")
+        await interaction.response.send_message(
+            f"❌ Failed to delete member: {e}", ephemeral=True
+        )
+        return
+
+    await interaction.response.send_message(
+        f"✅ Successfully deleted member ID `{member_id}`.", ephemeral=True
     )
 
 
@@ -620,6 +704,7 @@ async def members(interaction: discord.Interaction):
 async def scan_history(interaction: discord.Interaction):
     """
     Lists the last 10 scan events from the backend system.
+    Shows member names if UIDs are registered.
     """
     try:
         response = requests.get(
@@ -640,12 +725,28 @@ async def scan_history(interaction: discord.Interaction):
         )
         return
 
+    # Fetch members to map UIDs to names
+    uid_to_name = {}
+    try:
+        members_response = requests.get(
+            ENDPOINTS["members"], headers=REQUEST_HEADERS, timeout=5
+        )
+        members_response.raise_for_status()
+        members_data = members_response.json()
+        
+        # Create UID -> Name mapping
+        for member in members_data:
+            uid_to_name[member.get("uid")] = member.get("name")
+    except requests.RequestException as e:
+        logger.warning(f"Could not fetch members for scan history: {e}")
+        # Continue without member names
+
     # Build a more readable, robust list for the scan history
+    # Note: Backend returns ScanEvent with only 'uid' and 'time' fields
     history_lines = []
     for entry in data:
         uid = entry.get("uid", "Unknown UID")
-        name = entry.get("name")
-        raw_time = entry.get("time") or entry.get("timestamp")
+        raw_time = entry.get("time")
 
         # Try to parse ISO timestamps to a friendly format, fall back to raw string
         time_str = raw_time or "Unknown time"
@@ -656,10 +757,11 @@ async def scan_history(interaction: discord.Interaction):
             # keep raw_time if parsing fails
             pass
 
-        if name:
-            history_lines.append(f"• **{name}** (UID `{uid}`) — {time_str}")
+        # Check if UID is registered to a member
+        if uid in uid_to_name:
+            history_lines.append(f"• **{uid_to_name[uid]}** (UID `{uid}`) — {time_str}")
         else:
-            history_lines.append(f"• **{uid}** — {time_str}")
+            history_lines.append(f"• UID `{uid}` *(unregistered)* — {time_str}")
 
     history_list = "\n".join(history_lines)
 
@@ -676,6 +778,7 @@ async def scan_history(interaction: discord.Interaction):
 @app_commands.guilds(discord.Object(id=EXEC_GUILD_ID))
 async def visits(
     interaction: discord.Interaction,
+    member: discord.Member = None,
     from_date: str = None,
     to_date: str = None,
     limit: int = 100,
@@ -683,15 +786,51 @@ async def visits(
     """
     Retrieves office visits with optional date range filters.
     Results are paginated for readability.
-    1. from_date: Start date in YYYY-MM-DD format (optional).
-    2. to_date: End date in YYYY-MM-DD format (optional).
-    3. limit: Maximum number of visits to return (default 100, max 500).
+    1. member: Filter visits for a specific member (optional).
+    2. from_date: Start date in YYYY-MM-DD format (optional).
+    3. to_date: End date in YYYY-MM-DD format (optional).
+    4. limit: Maximum number of visits to return (default 100, max 500).
     """
     # Clamp limit to reasonable maximum
     limit = max(1, min(limit, 500))
 
     # Build query parameters
     params = {"limit": limit}
+    
+    # If member is specified, get their member_id from the backend
+    if member:
+        try:
+            # Fetch all members from the backend
+            members_response = requests.get(
+                ENDPOINTS["members"], headers=REQUEST_HEADERS, timeout=5
+            )
+            members_response.raise_for_status()
+            members_data = members_response.json()
+            
+            # Find the member by Discord ID
+            member_id = None
+            for m in members_data:
+                if m.get("discord_id") == str(member.id):
+                    member_id = m.get("id")
+                    break
+            
+            if member_id is None:
+                await interaction.response.send_message(
+                    f"❌ {member.mention} is not registered in the office system.",
+                    ephemeral=True,
+                )
+                return
+            
+            # Add member_id to query parameters
+            params["member_id"] = member_id
+            
+        except requests.RequestException as e:
+            logger.error(f"Error fetching members: {e}")
+            await interaction.response.send_message(
+                f"❌ Failed to fetch member data: {e}", ephemeral=True
+            )
+            return
+    
     if from_date:
         # Convert YYYY-MM-DD to RFC3339 format
         try:
@@ -857,7 +996,7 @@ async def delete_visits(
 
 
 @bot.tree.command(
-    name="signout_all", description="[Admin] Sign out all members from the office"
+    name="signout_all", description="Sign out all members from the office"
 )
 @app_commands.checks.has_permissions(administrator=True)
 @app_commands.guilds(discord.Object(id=EXEC_GUILD_ID))
@@ -949,12 +1088,14 @@ async def signout(interaction: discord.Interaction, member: discord.Member):
 async def leaderboard(
     interaction: discord.Interaction,
     period: str = "week",
-    top: int = 10
+    top: int = 10,
+    public: bool = False
 ):
     """
     Shows attendance leaderboard for a time period.
     1. period: Time period - 'week' (7 days), 'month' (30 days), 'semester' (120 days), 'all' (all time)
     2. top: Number of top members to show (default 10, max 25)
+    3. public: If true, shows leaderboard to everyone in the channel (default: false, only you can see it)
     """
     # Map period to days
     period_map = {
@@ -976,7 +1117,7 @@ async def leaderboard(
     top = max(1, min(top, 25))  # Clamp between 1 and 25
     
     # Defer response as this might take a moment
-    await interaction.response.defer(ephemeral=True)
+    await interaction.response.defer(ephemeral=not public)
     
     leaderboard_data, error = calculate_leaderboard(days=days, top_n=top)
     
@@ -999,7 +1140,111 @@ async def leaderboard(
         days=days
     )
     
-    await interaction.followup.send(embed=embed, ephemeral=True)
+    await interaction.followup.send(embed=embed, ephemeral=not public)
+
+
+@bot.tree.command(name="help", description="Learn how to use the IEEE Office Tracker system")
+async def help_command(interaction: discord.Interaction):
+    """
+    Displays comprehensive help information about the office tracking system.
+    """
+    embed = discord.Embed(
+        title="🏢 IEEE Office Tracker — Help Guide",
+        description="Welcome to the IEEE Office Attendance System! This bot tracks who's in the office using RFID cards and Discord integration.",
+        color=0x3498DB,
+    )
+    
+    # How It Works
+    embed.add_field(
+        name="📋 How It Works",
+        value=(
+            "1️⃣ **Scan your RFID card** at the office reader\n"
+            "2️⃣ System automatically signs you **in** (first scan)\n"
+            "3️⃣ Scan again to sign yourself **out**\n"
+            "4️⃣ **Dashboard updates** automatically every minute\n"
+            "5️⃣ At **4 AM**, everyone is auto-signed out (nightly cleanup)"
+        ),
+        inline=False
+    )
+    
+    # Interactive Dashboard
+    embed.add_field(
+        name="🎮 Interactive Dashboard",
+        value=(
+            "• **Refresh 🔄**: Manually update the dashboard (10s cooldown)\n"
+            "• **Leaving 🟥**: Sign yourself out via Discord (exec server only)"
+        ),
+        inline=False
+    )
+    
+    # Available Commands
+    guild_id = interaction.guild_id
+    is_exec_server = EXEC_GUILD_ID and guild_id == int(EXEC_GUILD_ID)
+    
+    if is_exec_server:
+        embed.add_field(
+            name="📝 Available Commands (Executive Server)",
+            value=(
+                "**Member Management:**\n"
+                "`/add_member` — Register a new member with RFID UID\n"
+                "`/members` — View all registered members\n"
+                "`/update_member` — Update member info (admin)\n"
+                "`/delete_member` — Remove a member (admin)\n\n"
+                "**Tracking & History:**\n"
+                "`/scan_history` — View last 10 RFID scans\n"
+                "`/visits` — View visit history with filters\n"
+                "`/delete_visits` — Delete visits in date range (admin)\n\n"
+                "**Manual Control:**\n"
+                "`/signin` — Manually sign in a member (admin)\n"
+                "`/signout` — Sign out a member\n"
+                "`/signout_all` — Sign out everyone (admin)\n\n"
+                "**Analytics:**\n"
+                "`/leaderboard` — View top members by visits & hours\n\n"
+                "**System:**\n"
+                "`/setup` — Create dashboard (admin)\n"
+                "`/weekly_reports` — Toggle weekly reports (admin)\n"
+                "`/help` — Show this help message"
+            ),
+            inline=False
+        )
+    else:
+        embed.add_field(
+            name="📝 Available Commands",
+            value=(
+                "`/setup` — Create the dashboard (admin)\n"
+                "`/help` — Show this help message\n\n"
+                "*More commands available on the executive server*"
+            ),
+            inline=False
+        )
+    
+    # Getting Started
+    embed.add_field(
+        name="🚀 Getting Started",
+        value=(
+            "**New members must be registered first:**\n"
+            "Ask an admin to run `/add_member` with your Discord account and RFID card UID.\n\n"
+            "**Once registered:**\n"
+            "Just scan your card at the office to check in/out!"
+        ),
+        inline=False
+    )
+    
+    # Tips
+    embed.add_field(
+        name="💡 Tips",
+        value=(
+            "• Leaderboard auto-filters 4 AM signouts\n"
+            "• Use `/leaderboard public:true` to share with everyone\n"
+            "• Dashboard auto-refreshes every minute\n"
+            "• You can manually sign out via the **Leaving** button or `/signout`"
+        ),
+        inline=False
+    )
+    
+    embed.set_footer(text="IEEE uOttawa Office Tracker • github.com/ieee-uottawa")
+    
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 @bot.tree.command(name="weekly_reports", description="[Admin] Enable or disable the weekly report task")
@@ -1123,12 +1368,15 @@ async def on_ready():
     logger.info("Global commands synced.")
 
     # Sync EXEC SERVER commands (like /add_member)
-    exec_guild_obj = discord.Object(id=EXEC_GUILD_ID)
-    try:
-        await bot.tree.sync(guild=exec_guild_obj)
-        logger.info(f"Exec Guild ({EXEC_GUILD_ID}) commands synced.")
-    except discord.HTTPException as e:
-        logger.error(f"Failed to sync Exec guild commands: {e}")
+    if EXEC_GUILD_ID:
+        exec_guild_obj = discord.Object(id=int(EXEC_GUILD_ID))
+        try:
+            await bot.tree.sync(guild=exec_guild_obj)
+            logger.info(f"Exec Guild ({EXEC_GUILD_ID}) commands synced.")
+        except discord.HTTPException as e:
+            logger.error(f"Failed to sync Exec guild commands: {e}")
+    else:
+        logger.info("EXEC_GUILD_ID not configured, skipping exec guild command sync.")
 
     # Start the auto-refresh background task
     if not auto_refresh_task.is_running():

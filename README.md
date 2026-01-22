@@ -7,10 +7,11 @@ Discord bot for tracking IEEE office attendance. Integrates with the [ieee-offic
 - **Real-time Dashboard**: Persistent embed showing current office occupants
 - **Interactive Buttons**:
   - "Leaving 🟥" - Sign out from the office (executive server only)
-  - "Refresh 🔄" - Manually refresh the dashboard
-- **Dual-Server Support**:
-  - Executive server with full control capabilities
-  - Community server with read-only dashboard viewing
+  - "Refresh 🔄" - Manually refresh the dashboard (10s cooldown)
+- **Flexible Server Support**:
+  - Optional executive server with full control capabilities
+  - Optional community server with read-only dashboard viewing
+  - Works with one or both servers configured
 - **Auto-refresh**: Dashboard updates every minute automatically
 - **Admin Commands**: Member management, manual check-in/out, history viewing
 - **Leaderboard & Reports**: Weekly report with top members by hours and visits
@@ -33,7 +34,7 @@ The bot connects to the `ieee-office-backend` HTTP service and provides a Discor
 - Python 3.12+
 - Discord bot token
 - Running `ieee-office-backend` server
-- Two Discord servers (guilds): executive and community
+- At least one Discord server (guild) - executive and/or community (both optional)
 
 ## Setup Instructions
 
@@ -51,11 +52,15 @@ Edit `.env` with your values:
 # Required
 DISCORD_TOKEN=your_discord_bot_token_here
 SERVER_URL=http://localhost:8080
-EXEC_GUILD_ID=your_exec_guild_id_here
-COMMUNITY_GUILD_ID=your_community_guild_id_here
+
+# At least one guild required (can configure both or just one)
+EXEC_GUILD_ID=your_exec_guild_id_here          # Optional: server with admin controls
+COMMUNITY_GUILD_ID=your_community_guild_id_here # Optional: server with read-only access
 
 # Optional
 OFFICE_TRACKER_CHANNEL_NAME=office-tracker
+WEEKLY_REPORT_CHANNEL_ID=your_channel_id_here
+WEEKLY_REPORT_ENABLED=true
 DISCORD_BOT_API_KEY=your_api_key_here # if backend is secured
 ```
 
@@ -123,7 +128,7 @@ Run `/setup` in the channel where you want the dashboard to appear. This creates
 Before members can use the system, register them with their Discord ID and RFID UID:
 
 ```bash
-/add_member @user uid:"ABC123DEF456"
+/add_member @user uid:"ABC123DEF456" [optional:]name:"John Doe"
 ```
 
 This links their Discord account to their RFID tag for seamless check-in/out.
@@ -133,12 +138,15 @@ This links their Discord account to their RFID tag for seamless check-in/out.
 ### Global Commands (All Servers)
 
 - `/setup` - Create the persistent dashboard embed (requires admin)
+- `/help` - Learn how to use the IEEE Office Tracker system
 
 ### Executive Server Commands
 
 #### Member Management
 
 - `/add_member @user uid:"..." [name:"..."]` - Register a new member with RFID UID (requires admin)
+- `/update_member member_id:ID [name:"..."] [uid:"..."] [discord_id:"..."]` - Update a member's information (requires admin)
+- `/delete_member member_id:ID` - Delete a member from the backend (requires admin)
 - `/members` - View all registered members
 - `/scan_history` - View last 10 RFID scans
 
@@ -146,12 +154,12 @@ This links their Discord account to their RFID tag for seamless check-in/out.
 
 - `/signin @member` - Manually sign in a member (requires admin)
 - `/signout @member` - Sign out a member
-- `/signout_all` - Sign out all members (requires admin)
+- `/signout_all` - Sign out all members
 
 #### History & Analytics
 
 - `/visits [from_date:YYYY-MM-DD] [to_date:YYYY-MM-DD] [limit:100]` - View visits with optional date filters (max 500)
-- `/leaderboard [metric:hours|visits] [period:week|month|semester|all] [top:10]` - View attendance leaderboard (auto-filters 4 AM signouts)
+- `/leaderboard [period:week|month|semester|all] [top:10] [public:false]` - View attendance leaderboard by visits and hours (auto-filters 4 AM signouts, use `public:true` to share with everyone)
 - `/delete_visits [from_date:YYYY-MM-DD] [to_date:YYYY-MM-DD]` - Delete visits within date range (requires admin)
 
 #### Reports Control
@@ -169,7 +177,7 @@ This links their Discord account to their RFID tag for seamless check-in/out.
 
 - **Refresh 🔄**: Manually refresh the dashboard
 
-**Note:** Refresh has a 15-second cooldown to prevent spam.
+**Note:** Refresh has a 10-second cooldown to prevent spam.
 
 ## Environment Variables
 
@@ -177,12 +185,14 @@ This links their Discord account to their RFID tag for seamless check-in/out.
 | ------------------------------ | -------- | ----------------------- | ----------------------------------------- |
 | `DISCORD_TOKEN`                | Yes      | -                       | Discord bot token from developer portal   |
 | `SERVER_URL`                   | Yes      | `http://localhost:8080` | URL of ieee-office-backend server         |
-| `EXEC_GUILD_ID`                | Yes      | -                       | Discord server ID with admin controls     |
-| `COMMUNITY_GUILD_ID`           | Yes      | -                       | Discord server ID with read-only access   |
+| `EXEC_GUILD_ID`                | No*      | -                       | Discord server ID with admin controls     |
+| `COMMUNITY_GUILD_ID`           | No*      | -                       | Discord server ID with read-only access   |
 | `OFFICE_TRACKER_CHANNEL_NAME`  | No       | `office-tracker`        | Channel name for dashboard                |
 | `WEEKLY_REPORT_CHANNEL_ID`     | No       | -                       | Channel ID for automated weekly reports   |
-| `WEEKLY_REPORT_ENABLED`        | No       | `true`                  | Toggle to enable/disable weekly reports   |
+| `WEEKLY_REPORT_ENABLED`        | No       | `false`                 | Toggle to enable/disable weekly reports   |
 | `DISCORD_BOT_API_KEY`          | No       | -                       | API key if backend is secured             |
+
+*At least one guild ID (`EXEC_GUILD_ID` or `COMMUNITY_GUILD_ID`) must be configured for dashboards to work.
 
 ## How It Works
 
