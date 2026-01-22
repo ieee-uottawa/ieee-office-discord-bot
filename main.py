@@ -1242,7 +1242,12 @@ async def help_command(interaction: discord.Interaction):
         inline=False
     )
     
-    embed.set_footer(text="IEEE uOttawa Office Tracker • github.com/ieee-uottawa")
+    embed.add_field(
+        name="📚 Learn More",
+        value="[View source code on GitHub](https://github.com/ieee-uottawa/ieee-office-discord-bot)",
+        inline=False
+    )
+    embed.set_footer(text="IEEE uOttawa Office Tracker")
     
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
