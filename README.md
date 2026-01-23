@@ -166,7 +166,7 @@ This links their Discord account to their RFID tag for seamless check-in/out.
 
 #### History & Analytics
 
-- `/visits [from_date:YYYY-MM-DD] [to_date:YYYY-MM-DD] [limit:100]` - View visits with optional date filters (max 500)
+- `/visits [member:@user] [from_date:YYYY-MM-DD] [to_date:YYYY-MM-DD] [limit:100]` - View visits with optional filters (by member, date, or limit; max 500)
 - `/leaderboard [period:week|month|semester|all] [top:10] [public:false]` - View attendance leaderboard by visits and hours (auto-filters 4 AM signouts, use `public:true` to share with everyone)
 - `/delete_visits [from_date:YYYY-MM-DD] [to_date:YYYY-MM-DD]` - Delete visits within date range (requires admin)
 
