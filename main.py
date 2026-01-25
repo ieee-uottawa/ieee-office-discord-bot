@@ -1005,7 +1005,6 @@ async def delete_visits(
 @bot.tree.command(
     name="signout_all", description="Sign out all members from the office"
 )
-@app_commands.checks.has_permissions(administrator=True)
 @app_commands.guilds(discord.Object(id=EXEC_GUILD_ID))
 async def signout_all(interaction: discord.Interaction):
     """
@@ -1204,7 +1203,7 @@ async def help_command(interaction: discord.Interaction):
                 "**Manual Control:**\n"
                 "`/signin` — Manually sign in a member (admin)\n"
                 "`/signout` — Sign out a member\n"
-                "`/signout_all` — Sign out everyone (admin)\n\n"
+                "`/signout_all` — Sign out everyone\n\n"
                 "**Analytics:**\n"
                 "`/leaderboard` — View top members by visits & hours\n\n"
                 "**System:**\n"
