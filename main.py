@@ -482,13 +482,20 @@ async def global_refresh():
 
         # Find the last message by the bot and edit it
         # NOTE: Could save Message IDs to a file to avoid history scraping)
-        async for msg in channel.history(limit=10):
-            if msg.author == bot.user:
-                try:
-                    await msg.edit(embed=embed, view=view_to_use)
-                except discord.HTTPException as e:
-                    logger.error(f"Failed to edit message in {guild.name}: {e}")
-                break
+        try:
+            async for msg in channel.history(limit=10):
+                if msg.author == bot.user:
+                    try:
+                        await msg.edit(embed=embed, view=view_to_use)
+                    except discord.HTTPException as e:
+                        logger.error(f"Failed to edit message in {guild.name}: {e}")
+                    break
+        except discord.DiscordServerError as e:
+            logger.error(f"Discord server error while fetching history in {guild.name}: {e}. Skipping this guild.")
+            continue
+        except discord.HTTPException as e:
+            logger.error(f"HTTP error while fetching history in {guild.name}: {e}. Skipping this guild.")
+            continue
 
 
 # -----------------------------
@@ -1346,7 +1353,10 @@ async def auto_refresh_task():
         if elapsed < REFRESH_COOLDOWN:
             return  # Skip refresh if within cooldown
     logger.info("Running scheduled auto-refresh...")
-    await global_refresh()
+    try:
+        await global_refresh()
+    except Exception as e:
+        logger.error(f"Error during auto-refresh: {e}", exc_info=True)
 
 
 @auto_refresh_task.before_loop
