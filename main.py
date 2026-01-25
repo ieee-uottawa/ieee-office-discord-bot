@@ -1345,11 +1345,20 @@ async def weekly_report_task():
 @tasks.loop(minutes=1)
 async def auto_refresh_task():
     """
-    Automatically refreshes the dashboard every 1 minutes.
+    Automatically refreshes the dashboard every 1 minute during business hours,
+    and every 5 minutes during off-hours (11 PM - 7 AM).
     """
-    # TODO: make it so that it has a longer interval during off-hours
+    now = datetime.now()
+    hour = now.hour
+    
+    # Off-hours: 11 PM - 7 AM (slower refresh rate)
+    if hour < 7 or hour >= 23:
+        # Only refresh every 5 minutes during off-hours
+        if now.minute % 5 != 0:
+            return
+    
     if LAST_REFRESH_TIME is not None:
-        elapsed = (datetime.now() - LAST_REFRESH_TIME).total_seconds()
+        elapsed = (now - LAST_REFRESH_TIME).total_seconds()
         if elapsed < REFRESH_COOLDOWN:
             return  # Skip refresh if within cooldown
     logger.info("Running scheduled auto-refresh...")
